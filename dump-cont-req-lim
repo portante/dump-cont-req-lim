@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+import json
+from pathlib import Path
+import sys
+import yaml
+
+if len(sys.argv) < 2:
+    print("First argument should be the path to the top-level directory of a 'must-gather'", file=sys.stderr)
+    sys.exit(1)
+
+mgd = Path(sys.argv[1])
+if not mgd.is_dir():
+    print(f"The provided 'must-gather' directory, {mgd}, does not exist", file=sys.stderr)
+    sys.exit(1)
+
+is_mg = False
+gather_d = None
+for dent in mgd.iterdir():
+    if not gather_d and dent.is_dir():
+        gather_d = dent
+    elif dent.name == "must-gather.logs":
+        is_mg = True
+
+if not is_mg or gather_d is None:
+    print(f"The provided 'must-gather' directory, {mgd}, does not appear to be an actual must-gather", sys.stderr)
+    sys.exit(1)
+
+nodes_d = gather_d / "nodes"
+csr_nodes_d = gather_d / "cluster-scoped-resources" / "core" / "nodes"
+namespaces_d = gather_d / "namespaces"
+if not nodes_d.is_dir() or not csr_nodes_d.is_dir() or not namespaces_d.is_dir():
+    print(f"The provided 'must-gather' directory, {mgd}, does not appear to contain an actual 'nodes', 'cluster-scoped-resources/core/nodes/', and/or 'namespaces' directories", sys.stderr)
+    sys.exit(1)
+
+print('"Node","Role","Namespace","Pod Name","QOS Class","Container Name","CpuReq","CpuLim","MemReq","MemLim"')
+for dent in nodes_d.iterdir():
+    if not dent.is_dir():
+        continue
+    pods_info_f = dent / "pods_info.json"
+    if not pods_info_f.exists():
+        continue
+    node = dent.name
+    with (csr_nodes_d / f"{node}.yaml").open() as f:
+        node_metadata = yaml.load(f, Loader=yaml.SafeLoader)
+        node_labels = node_metadata["metadata"]["labels"]
+        node_role = ""
+        if "node-role.kubernetes.io/control-plane" in node_labels:
+            node_role = "control-plane"
+        if "node-role.kubernetes.io/infra" in node_labels:
+            if node_role == "":
+                node_role = "infra"
+            else:
+                node_role += "infra"
+        if "node-role.kubernetes.io/worker" in node_labels:
+            if node_role == "":
+                node_role = "worker"
+            else:
+                node_role += ",worker"
+    with pods_info_f.open() as f:
+        pods_info = json.load(f)
+    for pod in pods_info:
+        namespace = pod["namespace"]
+        name = pod["name"]
+        qosClass = pod["qosClass"]
+        pod_metadata_f = namespaces_d / namespace / "pods" / name / f"{name}.yaml"
+        if not pod_metadata_f.exists():
+            print(f"{pod_metadata_f} missing", file=sys.stderr)
+            continue
+        with pod_metadata_f.open() as f:
+            pod_metadata = yaml.load(f, Loader=yaml.SafeLoader)
+        for cont in pod["containers"]:
+            cont_name = cont["name"]
+            cpuLim = None
+            memLim = None
+            cpuReq = None
+            memReq = None
+            cont_l = pod_metadata["spec"]["containers"]
+            res = None
+            for cont in cont_l:
+                if cont["name"] == cont_name:
+                    res = cont["resources"]
+            if "limits" in res:
+                if "cpu" in res["limits"]:
+                    cpuLim = res["limits"]["cpu"]
+                if "memory" in res["limits"]:
+                    memLim = res["limits"]["memory"]
+            if "requests" in res:
+                if "cpu" in res["requests"]:
+                    cpuLim = res["requests"]["cpu"]
+                if "memory" in res["requests"]:
+                    memLim = res["requests"]["memory"]
+            print(f'"{node}","{node_role}","{namespace}","{name}","{qosClass}","{cont_name}","{cpuReq}","{cpuLim}","{memReq}","{memLim}"')
+
+sys.exit(0)
