@@ -32,6 +32,27 @@ if not nodes_d.is_dir() or not csr_nodes_d.is_dir() or not namespaces_d.is_dir()
     print(f"The provided 'must-gather' directory, {mgd}, does not appear to contain an actual 'nodes', 'cluster-scoped-resources/core/nodes/', and/or 'namespaces' directories", sys.stderr)
     sys.exit(1)
 
+def cpuval(d):
+    if "cpu" not in d:
+        return None
+    val = d["cpu"]
+    if val[-1] == "m":
+        return int(val[:-1])
+    else:
+        return val
+
+def memval(d):
+    if "memory" not in d:
+        return None
+    val = d["memory"]
+    if val[-2:] == "Mi":
+        return int(val[:-2])
+    elif val[-2:] == "Gi":
+        return int(val[:-2]) * 1024
+    else:
+        return val
+
+
 print('"Node","Role","Namespace","Pod Name","QOS Class","Container Name","CpuReq","CpuLim","MemReq","MemLim"')
 for dent in nodes_d.iterdir():
     if not dent.is_dir():
@@ -64,7 +85,7 @@ for dent in nodes_d.iterdir():
         qosClass = pod["qosClass"]
         pod_metadata_f = namespaces_d / namespace / "pods" / name / f"{name}.yaml"
         if not pod_metadata_f.exists():
-            print(f"{pod_metadata_f} missing", file=sys.stderr)
+            #print(f"{pod_metadata_f} missing", file=sys.stderr)
             continue
         with pod_metadata_f.open() as f:
             pod_metadata = yaml.load(f, Loader=yaml.SafeLoader)
@@ -79,16 +100,13 @@ for dent in nodes_d.iterdir():
             for cont in cont_l:
                 if cont["name"] == cont_name:
                     res = cont["resources"]
+            assert res is not None
             if "limits" in res:
-                if "cpu" in res["limits"]:
-                    cpuLim = res["limits"]["cpu"]
-                if "memory" in res["limits"]:
-                    memLim = res["limits"]["memory"]
+                cpuLim = cpuval(res["limits"])
+                memLim = memval(res["limits"])
             if "requests" in res:
-                if "cpu" in res["requests"]:
-                    cpuLim = res["requests"]["cpu"]
-                if "memory" in res["requests"]:
-                    memLim = res["requests"]["memory"]
+                cpuReq = cpuval(res["requests"])
+                memReq = memval(res["requests"])
             print(f'"{node}","{node_role}","{namespace}","{name}","{qosClass}","{cont_name}","{cpuReq}","{cpuLim}","{memReq}","{memLim}"')
 
 sys.exit(0)
